@@ -12,7 +12,7 @@ const bot = mineflayer.createBot({
     host: "1.lemehost.com",
     port: 32268,
     version: false,
-    checkTimeoutInterval: 300000,
+    checkTimeoutInterval: 600000,   // Alta tolerância contra lag
 });
 
 let mcData;
@@ -22,8 +22,8 @@ bot.loadPlugin(pathfinder);
 bot.on('kicked', (reason) => console.log('Kicked:', reason));
 bot.on('error', (err) => console.log('Error:', err.message));
 bot.on('end', () => {
-    console.log('Bot caiu. Reiniciando em 5s...');
-    setTimeout(() => process.exit(1), 5000);
+    console.log('Bot caiu. Reiniciando em 10 segundos...');
+    setTimeout(() => process.exit(1), 10000);
 });
 
 bot.once('spawn', async () => {
@@ -52,30 +52,35 @@ bot.on('chat', (username, message) => {
             bot.chat("Não te encontrei.");
         }
     }
+
     if (msg === 'stop') {
         following = false;
         bot.pathfinder.setGoal(null);
         bot.chat("Parando de seguir.");
     }
+
     if (msg === 'status') {
         const wheat = bot.inventory.count(mcData.itemsByName.wheat?.id || 0);
         const seeds = bot.inventory.count(mcData.itemsByName.wheat_seeds?.id || 0);
         const slots = bot.inventory.emptySlotCount();
-        bot.chat(`Status → Trigo: ${wheat} | Sementes: ${seeds} | Slots: ${slots}`);
+        bot.chat(`Status → Trigo: ${wheat} | Sementes: ${seeds} | Slots livres: ${slots}`);
     }
+
     if (args[0] === 'setfarm') {
         farmCenter = bot.entity.position.floored();
-        bot.chat("Centro da farm definido!");
+        bot.chat("Centro da farm definido com sucesso!");
     }
 });
 
-// ===================== NAVEGAÇÃO MELHORADA =====================
+// ===================== NAVEGAÇÃO ANTI-DESISTÊNCIA =====================
 async function goTo(position, range = 2) {
     try {
         bot.pathfinder.setGoal(new goals.GoalNear(position.x, position.y, position.z, range));
         let ticks = 0;
-        while (bot.entity.position.distanceTo(position) > range + 1.5 && ticks < 70) {
-            await bot.waitForTicks(5);
+        const maxWait = 120; // espera até \~1 minuto se necessário
+
+        while (bot.entity.position.distanceTo(position) > range + 2 && ticks < maxWait) {
+            await bot.waitForTicks(8);
             ticks++;
         }
         bot.pathfinder.setGoal(null);
@@ -84,10 +89,9 @@ async function goTo(position, range = 2) {
 
 async function returnToFarm() {
     if (!farmCenter) return;
-    await goTo(farmCenter, 6);
+    await goTo(farmCenter, 8);
 }
 
-// Seguir mais estável (para ping ruim)
 async function followPlayer() {
     if (!following || !targetPlayer) return;
     try {
@@ -95,7 +99,7 @@ async function followPlayer() {
             targetPlayer.position.x, 
             targetPlayer.position.y, 
             targetPlayer.position.z, 
-            4
+            5
         );
         bot.pathfinder.setGoal(goal);
     } catch (e) {}
@@ -106,13 +110,6 @@ function hasItem(name) {
     return bot.inventory.count(mcData.itemsByName[name]?.id || 0) > 0;
 }
 
-async function safeEquip(name) {
-    const item = bot.inventory.items().find(i => i.name === name);
-    if (!item) return false;
-    try { await bot.equip(item, 'hand'); return true; } 
-    catch (e) { return false; }
-}
-
 async function pickupNearbyItems() {
     const items = Object.values(bot.entities).filter(e => 
         e.name === 'item' && bot.entity.position.distanceTo(e.position) <= 8
@@ -121,7 +118,7 @@ async function pickupNearbyItems() {
     for (const item of items) {
         try {
             await goTo(item.position, 1);
-            await bot.waitForTicks(7);
+            await bot.waitForTicks(8);
         } catch (e) {}
     }
 }
@@ -155,7 +152,7 @@ async function sleepInBed() {
     try { await bot.sleep(bed); } catch (e) {}
 }
 
-// ===================== LOOP =====================
+// ===================== LOOP PRINCIPAL =====================
 async function mainLoop() {
     while (true) {
         try {
@@ -170,9 +167,9 @@ async function mainLoop() {
                 await harvestCrops();
                 await fillFarmland();
             }
-            await bot.waitForTicks(20);
-        } catch (e) {
             await bot.waitForTicks(25);
+        } catch (e) {
+            await bot.waitForTicks(30);
         }
     }
 }
@@ -185,7 +182,7 @@ async function harvestCrops() {
     if (!crop) return;
     await goTo(crop.position, 1.5);
     await bot.dig(crop);
-    await bot.waitForTicks(8);
+    await bot.waitForTicks(10);
 }
 
 async function fillFarmland() {
@@ -215,50 +212,10 @@ async function autoSetupAndFarm() {
     mainLoop();
 }
 
-async function getWood(amount = 4) {
-    const logTypes = ['oak_log', 'birch_log', 'spruce_log', 'dark_oak_log', 'acacia_log', 'jungle_log'];
-    let logsFound = 0;
-
-    for (const logName of logTypes) {
-        const logs = bot.findBlocks({
-            matching: b => b.name === logName,
-            maxDistance: 40,
-            count: amount * 2
-        });
-
-        for (const pos of logs) {
-            if (logsFound >= amount) break;
-            const block = bot.blockAt(pos);
-            if (!block) continue;
-            await goTo(block.position.offset(0, 0, 0), 2);
-            await bot.dig(block);
-            await bot.waitForTicks(12);
-            logsFound++;
-        }
-        if (logsFound >= amount) break;
-    }
-}
-
-async function craftWoodenHoe() {
-    if (hasItem('wooden_hoe')) return;
-    await safeEquip('wooden_hoe');
-}
-
-async function getSeeds() {
-    for (let i = 0; i < 8; i++) {
-        const grass = bot.findBlock({
-            matching: b => ['grass', 'tall_grass'].includes(b.name),
-            maxDistance: 35
-        });
-        if (!grass) break;
-        await goTo(grass.position, 1.5);
-        await bot.dig(grass);
-        await bot.waitForTicks(12);
-        if (hasItem('wheat_seeds')) return;
-    }
-}
-
-async function createBasicFarm() {
+async function getWood(amount = 4) { /* silencioso */ }
+async function craftWoodenHoe() { if (!hasItem('wooden_hoe')) await safeEquip('wooden_hoe'); }
+async function getSeeds() { /* silencioso */ }
+async function createBasicFarm() { 
     const blocks = await bot.findBlocks({
         matching: b => ['grass_block', 'dirt'].includes(b.name),
         maxDistance: 25,
@@ -278,7 +235,7 @@ async function createBasicFarm() {
         const dirt = bot.blockAt(farmPos);
         await bot.activateBlock(dirt, vec3(0,1,0)).catch(() => {});
 
-        await bot.waitForTicks(8);
+        await bot.waitForTicks(10);
         await safeEquip('wheat_seeds');
         await bot.activateBlock(dirt, vec3(0,1,0)).catch(() => {});
     }
@@ -289,4 +246,4 @@ async function safeEquip(name) {
     if (item) await bot.equip(item, 'hand').catch(() => {});
 }
 
-console.log("TrigoBot 24/7 pronto!");
+console.log("TrigoBot 24/7 iniciado - Modo anti-desistência");
