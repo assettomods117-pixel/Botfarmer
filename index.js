@@ -9,8 +9,8 @@ let farmCenter = null;
 
 const bot = mineflayer.createBot({
     username: "TrigoBot",
-    host: "33.lemehost.com",
-    port: 24246,
+    host: "1.lemehost.com",
+    port: 32268,
     version: false,
     checkTimeoutInterval: 300000,
 });
