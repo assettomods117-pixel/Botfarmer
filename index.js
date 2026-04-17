@@ -22,7 +22,7 @@ bot.loadPlugin(pathfinder);
 bot.on('kicked', (reason) => console.log('Kicked:', reason));
 bot.on('error', (err) => console.log('Error:', err.message));
 bot.on('end', () => {
-    console.log('Bot caiu. Reiniciando em 5 segundos...');
+    console.log('Bot caiu. Reiniciando em 5s...');
     setTimeout(() => process.exit(1), 5000);
 });
 
@@ -48,6 +48,8 @@ bot.on('chat', (username, message) => {
         if (targetPlayer) {
             following = true;
             bot.chat(`Seguindo ${username}`);
+        } else {
+            bot.chat("Não te encontrei.");
         }
     }
     if (msg === 'stop') {
@@ -67,12 +69,12 @@ bot.on('chat', (username, message) => {
     }
 });
 
-// ===================== NAVEGAÇÃO =====================
+// ===================== NAVEGAÇÃO MELHORADA =====================
 async function goTo(position, range = 2) {
     try {
         bot.pathfinder.setGoal(new goals.GoalNear(position.x, position.y, position.z, range));
         let ticks = 0;
-        while (bot.entity.position.distanceTo(position) > range + 1.5 && ticks < 60) {
+        while (bot.entity.position.distanceTo(position) > range + 1.5 && ticks < 70) {
             await bot.waitForTicks(5);
             ticks++;
         }
@@ -83,6 +85,20 @@ async function goTo(position, range = 2) {
 async function returnToFarm() {
     if (!farmCenter) return;
     await goTo(farmCenter, 6);
+}
+
+// Seguir mais estável (para ping ruim)
+async function followPlayer() {
+    if (!following || !targetPlayer) return;
+    try {
+        const goal = new goals.GoalNear(
+            targetPlayer.position.x, 
+            targetPlayer.position.y, 
+            targetPlayer.position.z, 
+            4
+        );
+        bot.pathfinder.setGoal(goal);
+    } catch (e) {}
 }
 
 // ===================== FUNÇÕES =====================
@@ -139,12 +155,12 @@ async function sleepInBed() {
     try { await bot.sleep(bed); } catch (e) {}
 }
 
-// ===================== LOOP PRINCIPAL =====================
+// ===================== LOOP =====================
 async function mainLoop() {
     while (true) {
         try {
             if (following) {
-                if (targetPlayer) bot.pathfinder.setGoal(new goals.GoalFollow(targetPlayer, 3), true);
+                await followPlayer();
             } else {
                 await pickupNearbyItems();
                 await depositIfTooMuchWheat();
